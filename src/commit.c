@@ -414,7 +414,7 @@ int git_commit_amend(
 	return error;
 }
 
-static int insert_commit(git_vector *v, git_repository *repo, git_oid *id)
+static int insert_commit(git_vector *v, git_repository *repo, const git_oid *id)
 {
 	int error;
 	git_commit *commit;
@@ -428,6 +428,18 @@ static int insert_commit(git_vector *v, git_repository *repo, git_oid *id)
 	}
 
 	return 0;
+}
+
+struct mergehead_data {
+	git_repository *repo;
+	git_vector *commits;
+};
+
+int gather_commit_ids(const git_oid *id, void *payload)
+{
+	struct mergehead_data *data = (struct mergehead_data *) payload;
+
+	return insert_commit(data->commits, data->repo, id);
 }
 
 int git_commit_create_fromstate(
@@ -455,12 +467,10 @@ int git_commit_create_fromstate(
 	if ((error = insert_commit(&commits, repo, &current_id)) < 0)
 		goto cleanup;
 
-	/* TODO: how do we handle octopus merges? */
 	if (state == GIT_REPOSITORY_STATE_MERGE) {
-		if ((error = git_reference_name_to_id(&current_id, repo, GIT_MERGE_HEAD_FILE)) < 0)
-			goto cleanup;
+		struct mergehead_data mergehead_data = { repo, &commits };
 
-		if ((error = insert_commit(&commits, repo, &current_id)) < 0)
+		if ((error = git_repository_mergehead_foreach(repo, gather_commit_ids, &mergehead_data)) < 0)
 			goto cleanup;
 	}
 
@@ -484,6 +494,7 @@ cleanup:
 	git_vector_foreach(&commits, i, commit) {
 		git_commit_free(commit);
 	}
+	git_vector_free(&commits);
 	return 0;
 }
 
