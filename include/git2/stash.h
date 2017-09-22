@@ -47,6 +47,30 @@ typedef enum {
 } git_stash_flags;
 
 /**
+ * Save the local modifications to a new stash without changing
+ * workdir, index or refs/stash.
+ *
+ * @param out Object id of the commit containing the stashed state.
+ *
+ * @param repo The owning repository.
+ *
+ * @param stasher The identity of the person performing the stashing.
+ *
+ * @param message Optional description along with the stashed state.
+ *
+ * @param flags Flags to control the stashing process. (see GIT_STASH_* above)
+ *
+ * @return 0 on success, GIT_ENOTFOUND where there's nothing to stash,
+ * or error code.
+ */
+GIT_EXTERN(int) git_stash_save(
+	git_oid *out,
+	git_repository *repo,
+	const git_signature *stasher,
+	const char *message,
+	uint32_t flags);
+
+/**
  * Save the local modifications to a new stash.
  *
  * @param out Object id of the commit containing the stashed state.

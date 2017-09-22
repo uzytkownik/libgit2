@@ -504,16 +504,17 @@ static int reset_index_and_workdir(
 	return git_checkout_tree(repo, (git_object *)commit, &opts);
 }
 
-int git_stash_save(
+static int git_stash_create_common(
 	git_oid *out,
+	git_commit **commit,
 	git_repository *repo,
 	const git_signature *stasher,
 	const char *message,
+	git_buf *msg,
 	uint32_t flags)
 {
 	git_index *index = NULL;
 	git_commit *b_commit = NULL, *i_commit = NULL, *u_commit = NULL;
-	git_buf msg = GIT_BUF_INIT;
 	int error;
 
 	assert(out && repo && stasher);
@@ -521,7 +522,7 @@ int git_stash_save(
 	if ((error = git_repository__ensure_not_bare(repo, "stash save")) < 0)
 		return error;
 
-	if ((error = retrieve_base_commit_and_message(&b_commit, &msg, repo)) < 0)
+	if ((error = retrieve_base_commit_and_message(&b_commit, msg, repo)) < 0)
 		goto cleanup;
 
 	if ((error = ensure_there_are_changes_to_stash(
@@ -534,21 +535,79 @@ int git_stash_save(
 		goto cleanup;
 
 	if ((error = commit_index(
-			&i_commit, index, stasher, git_buf_cstr(&msg), b_commit)) < 0)
+			&i_commit, index, stasher, git_buf_cstr(msg), b_commit)) < 0)
 		goto cleanup;
 
 	if ((flags & (GIT_STASH_INCLUDE_UNTRACKED | GIT_STASH_INCLUDE_IGNORED)) &&
 		(error = commit_untracked(
-			&u_commit, index, stasher, git_buf_cstr(&msg),
+			&u_commit, index, stasher, git_buf_cstr(msg),
 			i_commit, flags)) < 0)
 		goto cleanup;
 
-	if ((error = prepare_worktree_commit_message(&msg, message)) < 0)
+	if ((error = prepare_worktree_commit_message(msg, message)) < 0)
 		goto cleanup;
 
 	if ((error = commit_worktree(
-			out, index, stasher, git_buf_cstr(&msg),
+			out, index, stasher, git_buf_cstr(msg),
 			i_commit, b_commit, u_commit)) < 0)
+		goto cleanup;
+
+	if (commit) {
+		git_commit **sel_commit;
+		if ((flags & GIT_STASH_KEEP_INDEX) != 0) {
+			sel_commit = &i_commit;
+		} else {
+			sel_commit = &b_commit;
+		}
+		*commit = *sel_commit;
+		*sel_commit = NULL;
+	}
+
+cleanup:
+	git_commit_free(i_commit);
+	git_commit_free(b_commit);
+	git_commit_free(u_commit);
+	git_index_free(index);
+
+	return error;
+}
+
+int git_stash_create(
+	git_oid *out,
+	git_repository *repo,
+	const git_signature *stasher,
+	const char *message,
+	uint32_t flags)
+{
+	git_buf msg = GIT_BUF_INIT;
+	int error;
+
+	assert(out && repo && stasher);
+
+	if ((error = git_stash_create_common(out, NULL, repo, stasher, message, &msg, flags)) < 0)
+		goto cleanup;
+
+cleanup:
+
+	git_buf_free(&msg);
+
+	return error;
+}
+
+int git_stash_save(
+	git_oid *out,
+	git_repository *repo,
+	const git_signature *stasher,
+	const char *message,
+	uint32_t flags)
+{
+	git_commit *commit = NULL;
+	git_buf msg = GIT_BUF_INIT;
+	int error;
+
+	assert(out && repo && stasher);
+
+	if ((error = git_stash_create_common(out, &commit, repo, stasher, message, &msg, flags)) < 0)
 		goto cleanup;
 
 	git_buf_rtrim(&msg);
@@ -558,7 +617,7 @@ int git_stash_save(
 
 	if ((error = reset_index_and_workdir(
 		repo,
-		((flags & GIT_STASH_KEEP_INDEX) != 0) ? i_commit : b_commit,
+		commit,
 		(flags & GIT_STASH_INCLUDE_UNTRACKED) != 0,
 		(flags & GIT_STASH_INCLUDE_IGNORED) != 0)) < 0)
 		goto cleanup;
@@ -566,10 +625,7 @@ int git_stash_save(
 cleanup:
 
 	git_buf_free(&msg);
-	git_commit_free(i_commit);
-	git_commit_free(b_commit);
-	git_commit_free(u_commit);
-	git_index_free(index);
+	git_commit_free(commit);
 
 	return error;
 }
